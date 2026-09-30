@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚶 걷는 마음 신호등 🚦 (프로토타입)</title>
+    
+    <!-- 폰트 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS (스타일링) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 라이브러리 CDN (폭죽 효과만 유지) -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { 'sans': ['"Noto Sans KR"', 'sans-serif'] },
+                    colors: {
+                        pastel: { bg: '#FDFBF7', blue: '#E0F2FE', green: '#D1FAE5', red: '#FEE2E2', yellow: '#FEF3C7' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #FDFBF7; overflow-x: hidden; }
+        
+        /* 신호등 빛 번짐 효과 */
+        .light-active-red { background-color: #ef4444; box-shadow: 0 0 35px 15px rgba(239, 68, 68, 0.7); }
+        .light-active-yellow { background-color: #eab308; box-shadow: 0 0 35px 15px rgba(234, 179, 8, 0.7); }
+        .light-active-green { background-color: #22c55e; box-shadow: 0 0 35px 15px rgba(34, 197, 94, 0.7); }
+        .light-inactive { background-color: #374151; box-shadow: inset 0 4px 6px rgba(0,0,0,0.6); opacity: 0.3; }
+        
+        /* 횡단보도 트랙 */
+        .crosswalk-track {
+            background: repeating-linear-gradient( 90deg, #9ca3af, #9ca3af 40px, #f3f4f6 40px, #f3f4f6 80px );
+            border: 4px solid #6b7280;
+        }
+        
+        /* 이모지 걷기 애니메이션 */
+        .walking-emoji { transition: left 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        @keyframes bounce-walk {
+            0%, 100% { transform: translateY(-50%); }
+            50% { transform: translateY(-60%); }
+        }
+        .is-walking { animation: bounce-walk 0.5s infinite; }
+
+        /* 로딩 스피너 및 사진 찰칵 효과 */
+        .loader {
+            border: 5px solid #f3f3f3; border-top: 5px solid #3b82f6; border-radius: 50%;
+            width: 40px; height: 40px; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        @keyframes flash-effect {
+            0% { background-color: rgba(255, 255, 255, 0); }
+            50% { background-color: rgba(255, 255, 255, 0.95); }
+            100% { background-color: rgba(255, 255, 255, 0); }
+        }
+        .flash-active { animation: flash-effect 0.3s ease-out; pointer-events: none; }
+        
+        /* 알림창(Toast) 애니메이션 */
+        @keyframes slideDown {
+            from { transform: translateY(-100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .toast-enter { animation: slideDown 0.3s ease-out forwards; }
+
+        /* 카메라 좌우 반전 (거울 모드) */
+        .mirror-video { transform: scaleX(-1); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col p-4 md:p-8 text-gray-800 relative">
+
+    <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 flex flex-col gap-2"></div>
+
+    <!-- 우측 상단 컨트롤 -->
+    <div class="absolute top-4 right-4 flex flex-col sm:flex-row items-end sm:items-center gap-2 bg-white/90 p-3 rounded-xl shadow-sm border border-gray-200 z-20">
+        <button onclick="openGuideModal()" class="bg-blue-100 hover:bg-blue-200 text-blue-700 py-1 px-3 rounded-lg text-sm font-bold transition-colors mr-2">ℹ️ 체험 안내</button>
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-600 font-bold">목표:</label>
+            <input type="number" id="target-input" value="23" class="w-16 border border-gray-300 rounded-lg text-center py-1 text-sm focus:outline-none focus:border-blue-400" onchange="updateTarget()">
+            <span class="text-sm text-gray-600 font-bold">명</span>
+        </div>
+        <button onclick="resetGame()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 py-1 px-3 rounded-lg text-sm font-bold transition-colors ml-1">🔄 초기화</button>
+    </div>
+
+    <header class="text-center mb-6 mt-20 sm:mt-0 relative">
+        <h1 class="text-4xl md:text-5xl font-bold text-blue-600 drop-shadow-sm flex items-center justify-center gap-3">
+            🚶 걷는 마음 신호등 🚦
+            <span class="bg-yellow-200 text-yellow-800 text-sm px-2 py-1 rounded-full font-bold align-middle">시뮬레이터</span>
+        </h1>
+        <p class="text-lg md:text-xl text-gray-600 mt-2 font-bold">공동체의 안전을 위해, 복도에선 걸어요</p>
+    </header>
+
+    <main class="grid grid-cols-1 lg:grid-cols-2 gap-8 flex-1 max-w-6xl mx-auto w-full">
+        
+        <!-- 좌측: 카메라 & 사진 찍기 -->
+        <div class="bg-white p-6 rounded-3xl shadow-lg flex flex-col items-center border-4 border-pastel-blue relative">
+            <div class="w-full flex justify-between items-center mb-4">
+                <h2 class="text-2xl text-blue-800 font-bold">📷 보행 자세 검사소</h2>
+                <div class="flex items-center gap-2 bg-blue-50 px-3 py-1 rounded-lg border border-blue-100">
+                    <span class="text-sm font-bold text-blue-600" id="camera-status-badge">대기 중</span>
+                </div>
+            </div>
+            
+            <!-- 카메라 화면 -->
+            <div id="webcam-container" class="w-full max-w-sm aspect-square bg-gray-100 rounded-2xl overflow-hidden shadow-inner flex items-center justify-center mb-4 relative">
+                <span class="text-gray-400 font-bold text-center px-4" id="camera-placeholder">아래 버튼을 눌러<br>카메라를 켜주세요.</span>
+                
+                <!-- 실제 카메라 비디오 태그 (거울 모드) -->
+                <video id="webcam-video" class="hidden w-full h-full object-cover mirror-video" autoplay playsinline muted></video>
+                
+                <!-- 분석 중 로딩 오버레이 -->
+                <div id="loading-overlay" class="hidden absolute inset-0 bg-white/70 flex flex-col items-center justify-center z-10 backdrop-blur-sm">
+                    <div class="loader mb-3"></div>
+                    <p class="text-blue-800 text-xl font-bold animate-pulse drop-shadow-md">AI 모델 분석 중...</p>
+                </div>
+                
+                <!-- 사진 찰칵 플래시 효과 -->
+                <div id="flash-overlay" class="absolute inset-0 z-20"></div>
+            </div>
+
+            <!-- 컨트롤 버튼 영역 -->
+            <div class="w-full flex flex-col gap-3 mt-auto">
+                <div id="setup-area" class="flex flex-col gap-2">
+                    <button onclick="startCamera()" id="start-btn" class="w-full bg-gray-800 hover:bg-gray-900 text-white text-xl font-bold py-3 rounded-xl shadow-md transition-transform active:scale-95">
+                        ⚙️ 카메라 켜기
+                    </button>
+                </div>
+                
+                <!-- 메인 액션 버튼 (처음엔 숨김) -->
+                <button onclick="captureAndSimulate()" id="capture-btn" class="hidden w-full bg-blue-500 hover:bg-blue-600 text-white text-2xl font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
+                    📸 찰칵! 검사하기
+                </button>
+            </div>
+            
+            <div id="debug-text" class="mt-4 text-sm text-gray-400 w-full text-center h-4 font-mono font-bold">카메라 연결을 기다리고 있습니다.</div>
+        </div>
+
+        <!-- 우측: 신호등 & 상태 메시지 -->
+        <div class="bg-white p-6 rounded-3xl shadow-lg flex flex-col items-center justify-center border-4 border-pastel-green relative">
+            
+            <div class="bg-gray-800 p-6 rounded-[3rem] shadow-2xl flex flex-col gap-6 mb-8 border-4 border-gray-700 relative">
+                <!-- 빨간불 -->
+                <div id="light-red" class="w-24 h-24 rounded-full light-inactive transition-all duration-300"></div>
+                <!-- 노란불 -->
+                <div id="light-yellow" class="w-24 h-24 rounded-full light-active-yellow transition-all duration-300"></div>
+                <!-- 초록불 -->
+                <div id="light-green" class="w-24 h-24 rounded-full light-inactive transition-all duration-300 relative flex items-center justify-center">
+                    <span id="pass-icon" class="text-4xl opacity-0 transition-opacity">✅</span>
+                </div>
+            </div>
+
+            <!-- 상태 안내 메시지 -->
+            <div id="status-message" class="text-3xl md:text-4xl text-center font-bold px-6 py-4 rounded-2xl w-full text-yellow-700 bg-yellow-100 transition-colors duration-300 shadow-sm">
+                카메라를 준비해주세요
+            </div>
+            
+            <!-- 수동 제어 미니 버튼 (선생님/시연자용 단축키 힌트) -->
+            <div class="flex flex-col items-center gap-2 mt-6 opacity-30 hover:opacity-100 transition-opacity duration-300 bg-gray-50 px-4 py-3 rounded-2xl border border-gray-200 absolute bottom-4">
+                <span class="text-xs text-gray-500 font-bold">시연용 수동 조작 단축키</span>
+                <div class="flex gap-6">
+                    <button onclick="manualResult('red')" class="w-5 h-5 rounded-full bg-red-500 cursor-pointer hover:scale-150 transition-transform shadow" title="수동 빨강 (단축키: ←)"></button>
+                    <button onclick="resetToReady()" class="w-5 h-5 rounded-full bg-yellow-500 cursor-pointer hover:scale-150 transition-transform shadow" title="준비 상태 (단축키: ↓)"></button>
+                    <button onclick="manualResult('green')" class="w-5 h-5 rounded-full bg-green-500 cursor-pointer hover:scale-150 transition-transform shadow" title="수동 초록 (단축키: →)"></button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 하단: 진행 트랙 -->
+    <div class="max-w-6xl mx-auto w-full mt-8">
+        <div class="bg-white p-6 rounded-3xl shadow-lg border-4 border-gray-200">
+            <div class="flex justify-between items-end mb-4">
+                <h3 class="text-2xl text-gray-700 font-bold">🏆 우리의 도착 목표!</h3>
+                <div class="text-3xl font-bold text-blue-600 bg-blue-50 px-4 py-1 rounded-lg border border-blue-100">
+                    <span id="current-score">0</span>명 <span class="text-xl text-gray-400 font-normal">/</span> <span id="target-score-display">23</span>명
+                </div>
+            </div>
+            
+            <div class="relative w-full h-24 crosswalk-track rounded-full shadow-inner overflow-hidden">
+                <!-- 걷는 사람 이모지 -->
+                <div id="walker-emoji" class="absolute top-1/2 -translate-y-1/2 text-5xl md:text-6xl walking-emoji z-10" style="left: 0%; padding-left: 10px;">
+                    <div style="transform: scaleX(-1);">🚶</div>
+                </div>
+                <!-- 도착 깃발 -->
+                <div class="absolute right-4 top-1/2 -translate-y-1/2 text-5xl z-0 opacity-80 cursor-pointer hover:scale-110 hover:opacity-100 transition-all drop-shadow-md" onclick="manualResult('green')" title="수동 1보 전진 (단축키: Space)">
+                    🏁
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 1. 안내 팝업 (Guide Modal) -->
+    <div id="guide-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
+        <div class="bg-white p-8 rounded-3xl shadow-2xl max-w-lg w-full mx-4 border-4 border-blue-200 relative">
+            <h2 class="text-3xl font-bold text-blue-700 mb-4 text-center">ℹ️ 시뮬레이터 안내</h2>
+            
+            <div class="space-y-4 text-gray-700 mb-8">
+                <p class="font-bold text-lg bg-blue-50 p-3 rounded-xl border border-blue-100">
+                    이 페이지는 복도 통행 안전을 위한 <span class="text-blue-600">보행 습관 검사 프로토타입</span>입니다.
+                </p>
+                <div class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                    <h3 class="font-bold mb-2">📌 체험 방법</h3>
+                    <ol class="list-decimal list-inside space-y-2 font-medium">
+                        <li>화면 아래의 <b>[카메라 켜기]</b> 버튼을 누릅니다.</li>
+                        <li>카메라 앞에 바른 걷기 자세로 섭니다.</li>
+                        <li><b>[📸 찰칵! 검사하기]</b> 버튼을 누릅니다.</li>
+                        <li>모의 AI가 자세를 분석하여 결과를 알려줍니다.</li>
+                    </ol>
+                </div>
+                <p class="text-sm text-gray-500 font-bold bg-yellow-50 p-3 rounded-lg">
+                    ※ 실제 무거운 AI 연산 대신, 확률 기반 모의 판정(시뮬레이션)으로 빠르고 쾌적하게 작동합니다.
+                </p>
+            </div>
+            
+            <button onclick="closeGuideModal()" class="w-full bg-blue-500 hover:bg-blue-600 text-white text-xl font-bold py-3 rounded-xl shadow transition-transform active:scale-95">
+                확인했습니다! (시작하기)
+            </button>
+        </div>
+    </div>
+
+    <!-- 2. 성공 모달 -->
+    <div id="success-modal" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50 backdrop-blur-sm">
+        <div class="bg-white p-8 md:p-12 rounded-3xl shadow-2xl text-center transform scale-90 transition-transform duration-300 max-w-md w-full border-8 border-yellow-400 relative overflow-hidden">
+            <div class="absolute -top-10 -left-10 text-8xl opacity-20">🎉</div>
+            <div class="absolute -bottom-10 -right-10 text-8xl opacity-20">🏁</div>
+            <div class="text-6xl mb-4 relative z-10">🎉🏁🎉</div>
+            <h2 class="text-4xl font-bold text-blue-600 mb-4 relative z-10">목표 달성!</h2>
+            <p class="text-xl text-gray-700 mb-8 font-bold relative z-10">모든 친구들이 바르고 안전하게<br>횡단보도를 건넜어요. 최고!</p>
+            <button onclick="closeSuccessModalAndReset()" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 text-2xl font-bold py-4 px-8 rounded-2xl shadow-lg w-full transition-transform active:scale-95 relative z-10">
+                다시 시작하기
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // 전역 상태 변수
+        let isCameraActive = false;
+        let isPredicting = false; 
+        let score = 0;
+        let targetScore = 23;
+        let resultTimeout = null; 
+        
+        // 오디오 컨텍스트
+        let audioCtx;
+        
+        // 요소 참조
+        const videoElement = document.getElementById('webcam-video');
+        const ui = {
+            red: document.getElementById('light-red'),
+            yellow: document.getElementById('light-yellow'),
+            green: document.getElementById('light-green'),
+            passIcon: document.getElementById('pass-icon'),
+            message: document.getElementById('status-message'),
+            emoji: document.getElementById('walker-emoji'),
+            scoreDisp: document.getElementById('current-score'),
+            targetDisp: document.getElementById('target-score-display'),
+            debug: document.getElementById('debug-text'),
+            captureBtn: document.getElementById('capture-btn'),
+            setupArea: document.getElementById('setup-area'),
+            cameraStatus: document.getElementById('camera-status-badge')
+        };
+
+        // --- 초기화 및 모달 ---
+        function openGuideModal() { document.getElementById('guide-modal').style.display = 'flex'; }
+        
+        function closeGuideModal() { 
+            document.getElementById('guide-modal').style.display = 'none'; 
+            initAudio(); // 사용자 인터랙션 시 오디오 활성화
+        }
+
+        // 자체 알림창 (Toast)
+        function showToast(message, type = 'error') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const bgColor = type === 'error' ? 'bg-red-500' : 'bg-blue-500'; // 시뮬레이터 안내용 파란색 사용
+            
+            toast.className = `${bgColor} text-white px-6 py-3 rounded-xl shadow-lg font-bold text-center toast-enter border-2 border-white/20`;
+            toast.textContent = message;
+            
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-10px)';
+                toast.style.transition = 'all 0.3s ease';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // --- 사운드 효과 (Web Audio API) ---
+        function initAudio() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playTone(freq, type, duration, vol=0.1) {
+            if(!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playShutterSound() {
+            initAudio();
+            playTone(800, 'square', 0.05, 0.1);
+            setTimeout(() => playTone(400, 'sawtooth', 0.1, 0.1), 50);
+        }
+
+        function playDingDong() {
+            initAudio();
+            playTone(659.25, 'sine', 0.4, 0.2); 
+            setTimeout(() => playTone(523.25, 'sine', 0.6, 0.2), 300); 
+        }
+
+        function playWarning() {
+            initAudio();
+            playTone(300, 'sawtooth', 0.3, 0.2);
+            setTimeout(() => playTone(250, 'sawtooth', 0.4, 0.2), 150);
+        }
+
+        // --- 카메라 제어 ---
+        async function startCamera() {
+            initAudio();
+            const startBtn = document.getElementById('start-btn');
+            startBtn.disabled = true;
+            startBtn.textContent = "권한 요청 중...";
+
+            try {
+                // 순수 브라우저 API를 사용하여 웹캠 스트림 가져오기
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } 
+                });
+                
+                videoElement.srcObject = stream;
+                videoElement.classList.remove('hidden');
+                document.getElementById('camera-placeholder').style.display = 'none';
+                
+                isCameraActive = true;
+                
+                // UI 변경
+                ui.setupArea.classList.add('hidden');
+                ui.captureBtn.classList.remove('hidden');
+                
+                ui.cameraStatus.textContent = "촬영 준비 완료";
+                ui.cameraStatus.classList.replace('text-blue-600', 'text-green-600');
+                ui.cameraStatus.parentElement.classList.replace('bg-blue-50', 'bg-green-50');
+                ui.cameraStatus.parentElement.classList.replace('border-blue-100', 'border-green-100');
+                
+                ui.debug.textContent = "카메라가 연결되었습니다. 사진을 찍어보세요!";
+                resetToReady();
+                
+            } catch (error) {
+                console.error("Camera error:", error);
+                showToast("카메라 접근 권한이 없거나 장치를 찾을 수 없습니다.", "error");
+                startBtn.disabled = false;
+                startBtn.textContent = "⚙️ 카메라 다시 켜기";
+            }
+        }
+
+        // --- 사진 찰칵 및 모의 AI 분석 ---
+        function captureAndSimulate() {
+            if(!isCameraActive || isPredicting) return;
+            
+            isPredicting = true;
+            ui.captureBtn.disabled = true;
+            ui.captureBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            
+            if(resultTimeout) clearTimeout(resultTimeout);
+
+            // 1. 사진 찰칵 연출
+            // 비디오 프레임을 일시정지시켜 사진이 찍힌 것처럼 연출
+            videoElement.pause(); 
+            
+            const flash = document.getElementById('flash-overlay');
+            flash.classList.remove('flash-active');
+            void flash.offsetWidth; 
+            flash.classList.add('flash-active');
+            playShutterSound();
+
+            ui.debug.textContent = "자세 데이터 분석 중 (시뮬레이션)...";
+            document.getElementById('loading-overlay').classList.remove('hidden');
+
+            // 2. 가짜 AI 분석 시간 지연 (1.2초) 및 랜덤 결과 도출
+            setTimeout(() => {
+                // 체험의 재미를 위해 걷기(성공) 확률을 80%로 높게 설정
+                const isWalking = Math.random() < 0.8; 
+                
+                document.getElementById('loading-overlay').classList.add('hidden');
+                ui.debug.textContent = isWalking ? "[결과] 걷기 자세 감지됨 (98%)" : "[결과] 뛰는 자세 감지됨 (85%)";
+                
+                if (isWalking) { 
+                    showResult('green');
+                } else { 
+                    showResult('red');
+                }
+                
+                // 비디오 다시 재생 (다음 사람을 위해)
+                videoElement.play();
+                
+            }, 1200);
+        }
+
+        // --- 신호등 결과 표시 ---
+        function showResult(resultType) {
+            // 모든 불 끄기
+            ui.red.className = 'w-24 h-24 rounded-full light-inactive transition-all duration-300';
+            ui.yellow.className = 'w-24 h-24 rounded-full light-inactive transition-all duration-300';
+            ui.green.className = 'w-24 h-24 rounded-full light-inactive transition-all duration-300 relative flex items-center justify-center';
+            ui.passIcon.style.opacity = '0';
+            
+            if (resultType === 'red') {
+                ui.red.className = 'w-24 h-24 rounded-full light-active-red transition-all duration-300 scale-110';
+                ui.message.innerHTML = '뛰면 위험해요!<br><span class="text-2xl">다시 뒤로 돌아가세요.</span>';
+                ui.message.className = 'text-3xl md:text-4xl text-center font-bold px-6 py-4 rounded-2xl w-full text-red-700 bg-red-100 transition-colors duration-300 shadow-md animate-pulse';
+                playWarning();
+                
+            } else if (resultType === 'green') {
+                ui.green.className = 'w-24 h-24 rounded-full light-active-green transition-all duration-300 scale-110 relative flex items-center justify-center';
+                ui.passIcon.style.opacity = '1';
+                ui.message.innerHTML = '참 잘했어요!<br><span class="text-2xl">안전하게 통과🚶</span>';
+                ui.message.className = 'text-3xl md:text-4xl text-center font-bold px-6 py-4 rounded-2xl w-full text-green-800 bg-green-200 transition-colors duration-300 shadow-md';
+                
+                playDingDong();
+                score++;
+                updateScoreUI();
+                
+                if (score >= targetScore) {
+                    setTimeout(() => { showSuccessModal(); }, 800);
+                }
+            }
+
+            // 3초 뒤에 다음 친구를 위해 노란불(준비) 상태로 자동 복귀
+            if (score < targetScore) {
+                resultTimeout = setTimeout(() => {
+                    resetToReady();
+                }, 3000);
+            }
+        }
+
+        // --- 상태 초기화 ---
+        function resetToReady() {
+            isPredicting = false;
+            ui.captureBtn.disabled = false;
+            ui.captureBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            if(!videoElement.paused && videoElement.srcObject) videoElement.play(); // 혹시 멈춰있다면 재생
+            
+            ui.red.className = 'w-24 h-24 rounded-full light-inactive transition-all duration-300';
+            ui.green.className = 'w-24 h-24 rounded-full light-inactive transition-all duration-300 relative flex items-center justify-center';
+            ui.passIcon.style.opacity = '0';
+            
+            ui.yellow.className = 'w-24 h-24 rounded-full light-active-yellow transition-all duration-300';
+            
+            ui.message.innerHTML = '다음 친구<br><span class="text-2xl">자세 잡고 찰칵! 눌러주세요</span>';
+            ui.message.className = 'text-3xl md:text-4xl text-center font-bold px-6 py-4 rounded-2xl w-full text-yellow-700 bg-yellow-100 transition-colors duration-300 shadow-sm';
+            
+            if(isCameraActive) ui.debug.textContent = "버튼을 눌러 촬영하세요.";
+        }
+
+        // --- 점수 제어 ---
+        function updateScoreUI() {
+            ui.scoreDisp.textContent = score;
+            let percentage = (score / targetScore) * 100;
+            if (percentage > 92) percentage = 92; 
+            ui.emoji.style.left = `calc(${percentage}% - 10px)`;
+        }
+
+        function updateTarget() {
+            let val = parseInt(document.getElementById('target-input').value);
+            targetScore = (isNaN(val) || val < 1) ? 1 : val;
+            ui.targetDisp.textContent = targetScore;
+            updateScoreUI();
+        }
+
+        function resetGame() {
+            score = 0;
+            updateScoreUI();
+            if(resultTimeout) clearTimeout(resultTimeout);
+            resetToReady();
+        }
+
+        // --- 시연용 수동 제어 ---
+        function manualResult(type) {
+            initAudio();
+            if(!isCameraActive) showToast("카메라를 먼저 켜주세요!", "error");
+            if(resultTimeout) clearTimeout(resultTimeout);
+            // 시연용이므로 즉시 결과 강제 표시
+            document.getElementById('loading-overlay').classList.add('hidden');
+            if(videoElement.paused && isCameraActive) videoElement.play();
+            showResult(type);
+        }
+
+        // 단축키 설정
+        window.addEventListener('keydown', function(e) {
+            if (e.target.tagName.toLowerCase() === 'input') return;
+            switch(e.key) {
+                case 'ArrowLeft':  e.preventDefault(); manualResult('red'); break;
+                case 'ArrowDown':  e.preventDefault(); resetToReady(); break;
+                case 'ArrowRight': 
+                case ' ':          e.preventDefault(); manualResult('green'); break;
+            }
+        });
+
+        // --- 성공 이펙트 및 모달 ---
+        function showSuccessModal() {
+            if (!audioCtx) initAudio();
+            // 팡파레 소리
+            const notes = [261.63, 329.63, 392.00, 523.25];
+            notes.forEach((freq, i) => { setTimeout(() => playTone(freq, 'square', 0.2, 0.1), i * 150); });
+            setTimeout(() => playTone(523.25, 'square', 0.6, 0.15), notes.length * 150);
+
+            document.getElementById('success-modal').classList.remove('hidden');
+            document.getElementById('success-modal').classList.add('flex');
+            
+            const duration = 3 * 1000;
+            const animationEnd = Date.now() + duration;
+            const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+
+            function randomInRange(min, max) { return Math.random() * (max - min) + min; }
+
+            const interval = setInterval(function() {
+                const timeLeft = animationEnd - Date.now();
+                if (timeLeft <= 0) return clearInterval(interval);
+                
+                const particleCount = 50 * (timeLeft / duration);
+                confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
+                confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
+            }, 250);
+        }
+
+        function closeSuccessModalAndReset() {
+            document.getElementById('success-modal').classList.add('hidden');
+            document.getElementById('success-modal').classList.remove('flex');
+            resetGame();
+        }
+        
+    </script>
+</body>
+</html>
